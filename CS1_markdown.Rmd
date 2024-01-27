@@ -1,0 +1,599 @@
+---
+title: "Case Study 1 Cyclistic"
+author: "John"
+date: "2024-1-26"
+output:
+  bookdown::pdf_document2:
+    keep_tex: true
+    toc: true
+    toc_depth: 2
+bibliography: references.bib
+always_allow_html: true
+---
+
+\listoffigures
+\listoftables
+
+```{r setup, cache=TRUE, message=FALSE, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(purrr)
+library(htmlwidgets)
+library(webshot)
+webshot::install_phantomjs()
+library(leaflet)
+library(leaflet.extras)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+```
+
+# Ask
+
+## What is the problem to be solved?
+
+The problem to be solved is to answer the following question: how do annual members and casual riders use Cyclistic bikes differently?  
+
+## How can the insights from the analysis drive business decisions?
+
+It is believed that the company’s future success depends on maximizing the number of annual memberships. The insights from understanding how casual riders and annual members use Cyclistic bikes differently will help the marketing analyst team design a new marketing strategy to convert casual riders into annual members.  
+
+## Business Task
+
+Design marketing strategies using digital media that will convert casual riders to become annual members.  
+
+## Key Stakeholders
+
+* Lily Moreno: The director of marketing and the manager. Responsible for the development of campaigns and initiatives to promote the bike-share program: including email, social media, and other channels.
+* Cyclistic executive team: The detail-oriented executive team will decide whether to approve the recommended marketing program.  
+
+
+# Prepare
+
+## Where is the data located?
+
+The data is located in an Amazon AWS S3 data bucket called "divvy-tripdata" \cite{bucket}, which was by Divvy, “Chicagoland’s bike share system across Chicago and Evanston that provides residents and visitors with a convenient, fun and affordable transportation option for getting around and exploring Chicago.” According to Divvy Bikes’ Data License Agreement: “The City of Chicago owns all right, title, and interest in the Data.” \cite{license}  
+
+## How is the data organized?
+
+On the data bucket page “divvy-tripdata” \cite{bucket}, the data appears to be split into separate CSV files starting from 2013 up to now, each CSV contained within one zip file. It started out with 2013 in one zip file, then 2014 to 2017 were each split into two files per year, 2018 to 2019 were each split into quarters, the first quarter of 2020 (January to March) was recorded into one file, then all subsequent zip files are for each month following March 2020.
+
+As a separate note, the description document of this case study \cite{gdac} mentioned "In 2016, Cyclistic launched a successful bike-share offering. ...", implying that the company's operation has not started until the year 2016, although the data set started from 2013.  
+
+The scope of this case study is for the past 12 months \cite{gdac}. The following R code chunk reads the CSV files for the time frame December 2022 to November 2023.  
+```{r read-data, cache=TRUE, message=FALSE}
+# Upload Divvy datasets (csv files) here
+december_2022 <- read_csv("202212-divvy-tripdata.csv")
+january_2023 <- read_csv("202301-divvy-tripdata.csv")
+february_2023 <- read_csv("202302-divvy-tripdata.csv")
+march_2023 <- read_csv("202303-divvy-tripdata.csv")
+april_2023 <- read_csv("202304-divvy-tripdata.csv")
+may_2023 <- read_csv("202305-divvy-tripdata.csv")
+june_2023 <- read_csv("202306-divvy-tripdata.csv")
+july_2023 <- read_csv("202307-divvy-tripdata.csv")
+august_2023 <- read_csv("202308-divvy-tripdata.csv")
+september_2023 <- read_csv("202309-divvy-tripdata.csv")
+october_2023 <- read_csv("202310-divvy-tripdata.csv")
+november_2023 <- read_csv("202311-divvy-tripdata.csv")
+```
+
+The tibbles created from reading all of the above 12 CSV files are put into a list.  
+```{r list-of-dfs, cache=TRUE, message=FALSE, dependson="read-data"}
+list_of_dfs <- list(december_2022, january_2023, february_2023, march_2023,
+                    april_2023, may_2023, june_2023, july_2023,
+                    august_2023, september_2023, october_2023, november_2023)
+```
+
+The fields in all tibbles of `list_of_dfs` are the same as indicated in the following results, and the column names are also shown below in Table \@ref(tab:column-names). For the hidden code which generates the following results, please refer to \cite{rmd}.   
+```{r column-names, cache=TRUE, message=FALSE, echo=FALSE, dependson="list-of-dfs"}
+# compare column names in each of the files
+common_columns <- colnames(list_of_dfs[[1]])
+for (df in tail(list_of_dfs, -1)) {
+  common_columns <- intersect(common_columns, colnames(df))
+}
+same_cols <- TRUE
+for (df in list_of_dfs) {
+  if (!all(common_columns == colnames(df))) {
+    same_cols <- FALSE
+    break
+  }
+}
+if (!same_cols) {
+  print("The column names are not all the same.")
+} else {
+  print("The column names are all the same.")
+  kable(common_columns, caption = "Column Names")
+}
+```
+The data types for the fields in all of the 12 CSV files are also the same as indicated below. For the hidden code which generates the following results, please refer to \cite{rmd}.   
+```{r data-type-compare-two-months, cache=TRUE, message=FALSE, echo=FALSE, dependson="list-of-dfs"}
+same_dtypes <- TRUE
+df1 = list_of_dfs[[1]]
+
+for (df2 in tail(list_of_dfs, -1)) {
+  types_match <- map_lgl(seq_along(df1), ~ identical(typeof(df1[[.]]), typeof(df2[[.]])))
+  if (!all(types_match)) {
+    same_dtypes <- FALSE
+    break
+  }
+}
+
+if (!same_dtypes) {
+  print("The column data types are not all the same.")
+} else {
+  print("The column data types are all the same.")
+}
+```
+
+The following code binds the data from all 12 CSV files into one tibble.  
+```{r all-trips, cache=TRUE, message=FALSE, dependson="list-of-dfs"}
+all_trips <- bind_rows(list_of_dfs)
+```
+
+The tibble is structured as shown in Table \@ref(tab:combined-data-tibble-check), where some of the columns are shown and only the first six rows are listed.  
+```{r combined-data-tibble-check, cache=TRUE, echo=FALSE, dependson="all-trips"}
+all_trips %>%
+  select(!c(ride_id,rideable_type,start_station_name,start_station_id,
+            end_station_name,end_station_id)) %>%
+  head() %>%
+  kable(caption = "`all\\_trips` tibble structure without `ride\\_id`, `rideable\\_type`, `start\\_station\\_name`, `start\\_station\\_id`, `end\\_station\\_name`, and `end\\_station\\_id`")
+```
+
+## Are there issues with bias or credibility in this data? Does the data ROCCC?
+
+The data doesn’t appear to possess a bias that would systematically skew the results in a certain direction. The data consists of Cyclistic bike trips that took place between the beginning of December 2022 to the end of November 2023 (12 months). Sampling bias may not apply here, for example, this dataset does not miss a single season as it covers the entire contiguous 12 months. The data were automatically recorded by the geotracking of the bicycles, it would be difficult for observer bias to occur.  
+
+For the other two biases, interpretation and confirmation, they are a posterior to data collection and must be kept in mind during the analysis. More specifically, interpretation bias is the tendency to always interpret ambiguous situations in a positive or negative way, and confirmation bias is the tendency to search for, or interpret information in a way that confirms preexisting beliefs \cite{gdac}.  
+
+Identifying the data source as a good data source with ROCCC:
+
+* Reliable: This dataset is identified for use in Google Data Analytics certificate program \cite{gdac} module 8. It is trusted that the information in the dataset has been vetted and proven fit for use in this case study.
+* Original: The data has been made available by Motivate International Inc. under a Data License Agreement (with Lyft Bikes and Scooters, LLC) \cite{gdac}.
+* Comprehensive: For the purposes of this case study, the datasets are appropriate and will enable the business questions to be answered.
+* Current: The data covers the time from the beginning of December 2022 to the end of November 2023 (12 months).
+* Citing: The data is cited since the Google Data Analytics Certificate program \cite{gdac} cites the data provided by Divvy (Cyclistic) through geotracking of their bikes, and “Divvy is a program of the Chicago Department of Transportation (CDOT), which owns the city’s bikes, stations and vehicles.” \cite{license}  
+
+## How are licensing, privacy, security, and accessibility addressed?
+
+Licensing is addressed in the Data License Agreement provided by Cyclistic (Divvy Bikes), which “grants [the user] a non-exclusive, royalty-free, limited, perpetual license to access, reproduce, analyze, copy, modify, distribute in [their] product or service and use the Data for any lawful purpose.” \cite{license}  
+
+The dataset provided does not contain personally identifiable information (PII).  
+
+Security at the source is addressed by the Lyft Privacy Policy, which states that they “take reasonable and appropriate measures designed to protect [the user's] personal information.” \cite{privacy}  The usage of the dataset in this case study is limited to the purpose of completing the module 8 of Google Data Analytics certificate program \cite{gdac}.  
+
+The dataset is referred to by the Google Data Analytics Certificate Program \cite{gdac} and is accessible at \cite{bucket}.  
+
+## How was the data's integrity verified?
+
+The accuracy of the data \cite{bucket} is good in regards to the dates and times of the bike rides. The data is almost complete with a portion of the total records missing values for station fields like `start_station_name` and `start_station_id` to be further clarified later in the document. Additionally, there are missing values for end station latitude and longitude, and there are some inconsistency in `started_at` and `ended_at` for some trips because they yield negative differences. All of this will be elaborated later in this document. The data can also be considered trustworthy since the data is owned by the City of Chicago \cite{license}.  
+
+## How does it help answer the question?
+
+The dataset contains all relevant information of individual trips for the past 12 months, which would help to understand how the cansual riders and annual members use the the bike-share service in the past 12 months.  
+
+## Are there any problems with the data?
+
+There exist some NA in the `start_station_name` field as shown in Table \@ref(tab:check-station-names). For the hidden code which generates Table \@ref(tab:check-station-names), please refer to \cite{rmd}.  
+```{r check-station-names, cache=TRUE, message=FALSE, echo=FALSE, dependson="all-trips"}
+all_trips %>%
+  distinct(start_station_name) %>%
+  arrange(desc(start_station_name)) %>%
+  tail() %>%
+  kable(caption = "Some of `start\\_station\\_name`, including NA")
+```
+
+As stated above, there are NAs for `start_station_name`. Table \@ref(tab:all-trips-na-counts-1) shows NA counts for that column and any other columns.  
+```{r all-trips-na-counts-1, cache=TRUE, message=FALSE, dependson="all-trips"}
+all_trips_na_counts_1 <- colSums(is.na(all_trips))
+kable(all_trips_na_counts_1, caption = "Number of NAs for each column in `all\\_trips`")
+```
+
+There are no NaN values in the fields as shown in Table \@ref(tab:all-trips-nan-counts).  
+```{r all-trips-nan-counts, cache=TRUE, message=FALSE, dependson="all-trips"}
+all_trips_nan_counts <- all_trips %>%
+  summarize_all(~ sum(is.nan(.)))
+all_trips_nan_counts_vector <- as.numeric(all_trips_nan_counts)
+names(all_trips_nan_counts_vector) <- c("ride_id", "rideable_type", "started_at",
+  "ended_at", "start_station_name", "start_station_id", "end_station_name",
+  "end_station_id", "start_lat", "start_lng", "end_lat", "end_lng", "member_casual")
+kable(all_trips_nan_counts_vector, caption = "Number of NaNs for each column in `all\\_trips`")
+```
+
+## Description of all Data Sources used
+
+The data source used in this case study is a data bucket called [divvy-tripdata](https://divvy-tripdata.s3.amazonaws.com/index.html) \cite{bucket}, which was produced by Divvy, “Chicagoland’s bike share system across Chicago and Evanston that provides residents and visitors with a convenient, fun and affordable transportation option for getting around and exploring Chicago.” \cite{about} According to Divvy Bikes’ Data License Agreement: “The City of Chicago owns all right, title, and interest in the Data.” \cite{license} This is most likely first-party data. For this case study, the company will be referred to as Cyclistic.  
+
+
+# Process
+
+## What tools were chosen for the analysis and why?
+
+R and RStudio, R is a programming language frequently used for statistical analysis, visualization, and other data analysis. This project started with spreadsheets, but it soon became apparent that spreadsheets could not handle the large dataset as it takes time to process the data. Then the tool for this project was switched to R/RStudio. So far, R/RStudio has shown that it can handle processing the large dataset for this project.  
+
+## Is the data's integrity ensured?
+
+The accuracy of the data is good in regards to the dates and times of the bike rides. The data is almost complete with a portion of the total records missing values for station fields like `start_station_name` and `start_station_id`. Please refer to the end of the "Prepare" section for more details. The data can also be considered trustworthy since the data is owned by the City of Chicago. \cite{license}  
+
+## What steps were taken to ensure that the data is clean?
+
+1. Check for consistency in columns and data types from the CSV files in the section "Prepare", subsection "How is the data organized?".
+2. Merge the multiple data sets into a single data set in the section "Prepare", subsection "How is the data organized?".
+3. Inspect the new data set for any NAs or NaNs in the section "Prepare", subsection "Are there any problems with the data?".
+4. Remove columns that have high NA counts or are not necessary for the analysis in the section "Process", subsection "Documentation of any cleaning or manipulation of data".
+5. Remove rows that contain remaining NAs, preferably when NA counts are small in the section "Process", subsection "Documentation of any cleaning or manipulation of data".
+6. Inspect the resulting data set for any more NAs in the section "Process", subsection "Documentation of any cleaning or manipulation of data".
+7. Check the unique values for all string variables in the section "Process", subsection "Documentation of any cleaning or manipulation of data".
+8. Create and format new fields necessary for the analysis in the section "Process", subsection "Documentation of any cleaning or manipulation of data".
+9. Check the data type of ride_length and convert to numeric type if necessary in the section "Process", subsection "Documentation of any cleaning or manipulation of data".
+10. Check the values of ride_length and filter out the rows with negative values in the section "Process", subsection "Documentation of any cleaning or manipulation of data".  
+
+## How can the data be verified as clean and ready to analyze?
+
+The data must have all of the required information, consistent data types, no NAs, and no outliers that would have any effect on the analysis. The dataset `all_trips_v3`, which is created in section "Process", subsection "Documentation of any cleaning or manipulation of data", is clear and will be used for the rest of the analysis steps.  
+
+## Is the cleaning process documented so the results can be reviewed and shared?
+
+The steps for the cleaning process and the data manipulation is documented clearly in this R markdown document.  
+
+## Documentation of any cleaning or manipulation of data
+
+Drop the fields `start_station_name`, `start_station_id`, `end_station_name`, and `end_station_id` due to NA counts. Refer to section "Prepare", subsection "Are there any problems with the data?" This analysis will not use these four fields.  
+```{r all-trips-v2, cache=TRUE, message=FALSE, dependson="all-trips"}
+all_trips_v2 <- all_trips %>%  
+  select(-c(start_station_name, start_station_id, end_station_name, end_station_id))
+```
+
+Check the NA counts after removal of four fields, as shown in Table \@ref(tab:all-trips-na-counts-2).  
+```{r all-trips-na-counts-2, cache=TRUE, message=FALSE, dependson="all-trips-v2"}
+all_trips_na_counts_2 <- colSums(is.na(all_trips_v2))
+kable(all_trips_na_counts_2, caption = "Number of NAs in all columns of `all\\_trips\\_v2`")
+```
+
+Remove the rows that still have NAs.  
+```{r all-trips-v3, cache=TRUE, message=FALSE, dependson="all-trips-v2"}
+all_trips_v3 <- na.omit(all_trips_v2)
+```
+
+Check the NA counts after removal of rows with NAs, as shown in Table \@ref(tab:all-trips-na-counts-3).  
+```{r all-trips-na-counts-3, cache=TRUE, message=FALSE, dependson="all-trips-v3"}
+all_trips_na_counts_3 <- colSums(is.na(all_trips_v3))
+kable(all_trips_na_counts_3, caption = "Number of NAs in all columns of `all\\_trips\\_v3`")
+```
+
+\newpage
+
+Use glimpse to examine the resulting data set.  
+```{r glimpse-data, cache=TRUE, message=FALSE, dependson="all-trips-v3"}
+glimpse(all_trips_v3)
+```
+
+Check the unique values and associated counts of `member_casual` in Table \@ref(tab:table-member-casual).  
+```{r table-member-casual, cache=TRUE, message=FALSE, dependson="all-trips-v3"}
+table(all_trips_v3$member_casual) %>%
+  kable(caption = "Unique values of `member\\_casual` variable")
+```
+
+Check the unique values and associated counts of `rideable_type` in Table \@ref(tab:table-rideable-type).
+```{r table-rideable-type, cache=TRUE, message=FALSE, dependson="all-trips-v3"}
+table(all_trips_v3$rideable_type) %>%
+  kable(caption = "Unique values of `rideable\\_type` variable")
+```
+
+\newpage
+
+Create date-related columns using the `started_at` column.  
+```{r all-trips-v3-addition, cache=TRUE, message=FALSE, dependson="all-trips-v3"}
+#The default format is yyyy-mm-dd
+all_trips_v3$date <- as.Date(all_trips_v3$started_at)
+all_trips_v3$month <- format(as.Date(all_trips_v3$date), "%m")
+all_trips_v3$day <- format(as.Date(all_trips_v3$date), "%d")
+all_trips_v3$year <- format(as.Date(all_trips_v3$date), "%Y")
+all_trips_v3$day_of_week <- format(as.Date(all_trips_v3$date), "%A")
+```
+
+Create the `ride_length` column using `difftime()` to get duration of a bike ride.  
+```{r all-trips-v3-addition-2, cache=TRUE, message=FALSE, dependson="all-trips-v3-addition"}
+all_trips_v3$ride_length <- difftime(all_trips_v3$ended_at,all_trips_v3$started_at)
+```
+
+Format `ride_length` to numeric data type for use in analysis.  
+```{r all-trips-v3-final, cache=TRUE, message=FALSE, dependson="all-trips-v3-addition-2"}
+is.numeric(all_trips_v3$ride_length)
+all_trips_v3$ride_length <- as.numeric(as.character(all_trips_v3$ride_length))
+is.numeric(all_trips_v3$ride_length)
+```
+
+Use a boxplot to create a visual for the range of `ride_length` values for casual riders and members as shown in Figure \@ref(fig:boxplot-1).  
+```{r boxplot-1, cache=TRUE, message=FALSE, dependson="all-trips-v3-final", fig.cap="Boxplot of ride_length for casual riders and members"}
+all_trips_v3 %>%
+  ggplot(aes(member_casual, ride_length)) +
+  geom_boxplot()
+```
+
+Check the summary of the clean dataset, especially, for example, the minimum value of `ride_length` for negative calculations.  
+```{r summary-1, cache=TRUE, message=FALSE, dependson="all-trips-v3-final"}
+summary(all_trips_v3)
+```
+
+Remove rows where `ride_length` is less than 0.  
+```{r all-trips-v3-final-2, cache=TRUE, message=FALSE, dependson="all-trips-v3-final"}
+all_trips_v3 <- all_trips_v3[!(all_trips_v3$ride_length < 0),]
+```
+
+Use another boxplot to show that the negative `ride_length` values have been removed as shown in Figure \@ref(fig:boxplot-2).  
+```{r boxplot-2, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-2", fig.cap="Boxplot of ride_length with negative values removed for casual riders and members"}
+all_trips_v3 %>%
+  ggplot(aes(member_casual, ride_length)) +
+  geom_boxplot()
+```
+
+
+# Analyze
+
+## How should the data be organized to perform analysis on it?
+
+The monthly data frames were stacked together into one data frame with the `bind_rows()` function. Columns containing high NA counts were removed while the rows they were in are maintained. Rows with remaining NAs were removed. New columns were created, calculated, and formatted for analysis. Rows that contained negative `ride_length` values were removed.  
+
+## Has the data been properly formatted?
+
+Yes. Additionally, in the section "Analyze", subsection "What trends or relationships were found in the data?" the order for day of the week will be added.  
+
+## What surprises were discovered in the data?
+
+Some of the values for `ride_length` were negative as discussed in section "Process", subsection "Documentation of any cleaning or manipulation of data".
+
+## What trends or relationships were found in the data?
+
+As shown by the following boxplot (Figure \@ref(fig:boxplot-3)) and summary statistics (Table \@ref(tab:summarize)): The `ride_length` mean, 25 percentile, median, and 75 percentile values for casual riders are all higher than those for members.  
+```{r boxplot-3, cache=TRUE, message=FALSE, warning=FALSE, dependson="all-trips-v3-final-2", fig.cap="Zoomed in Boxplot of ride_length"}
+all_trips_v3 %>%
+  ggplot(aes(member_casual, ride_length)) +
+  geom_boxplot() +
+  ylim(-1, 2200)
+```
+
+```{r summarize, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-2"}
+# Compute summary statistics
+summary_stats <- all_trips_v3 %>%
+  group_by(member_casual) %>%
+  summarize(
+    mean = mean(ride_length),
+    minimum = min(ride_length),
+    q25 = quantile(ride_length, 0.25),
+    median = median(ride_length),
+    q75 = quantile(ride_length, 0.75),
+    maximum = max(ride_length)
+  )
+kable(summary_stats, caption = "Summary Statistics of `ride\\_length`")
+```
+
+The order of values in the `day_of_week` column was set to be applied to the next summary statistics for casual riders and members.  
+```{r all-trips-v3-final-3, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-2"}
+all_trips_v3$day_of_week <- ordered(all_trips_v3$day_of_week,
+  levels=c("Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"))
+```
+
+The average `ride_length` of casual riders appears to be higher than the average `ride_length` of members on each day of the week as shown in Table \@ref(tab:summarize-2). The quantiles of casual riders is also higher than the quantiles of members by day of the week.  
+```{r summarize-2, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-3"}
+# Compute summary statistics with day of week
+summary_stats_3 <- all_trips_v3 %>%
+  group_by(member_casual, day_of_week) %>%
+  summarize(
+    mean = mean(ride_length),
+    minimum = min(ride_length),
+    q25 = quantile(ride_length, 0.25),
+    median = median(ride_length),
+    q75 = quantile(ride_length, 0.75),
+    maximum = max(ride_length)
+  )
+kable(summary_stats_3, caption = "Summary Statistics of `ride\\_length` by `day\\_of\\_week`")
+```
+
+The number of rides for members by day of the week is higher than the number of rides for casual riders, especially during the weekdays, as shown in Table \@ref(tab:summarize-3).  
+```{r summarize-3, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-3"}
+# analyze ridership data by type and weekday
+all_trips_v3 %>% 
+  mutate(weekday = wday(started_at, label = TRUE)) %>% #creates weekday field using wday()
+  group_by(member_casual, weekday) %>% #groups by usertype and weekday
+  summarise(number_of_rides = n(), #calculates the number of rides
+          average_duration = mean(ride_length), #the average duration
+          median_duration = median(ride_length)) %>% #the median duration
+  arrange(member_casual, weekday) %>% #sorts by usertype then weekday
+  kable(caption = "Three Statistics of `ride\\_length` to be plotted")
+```
+
+## How will these insights help answer the business questions?
+
+The above insights will help find out what are the differences and similarities to how casual riders and annual members use Cyclistic bikes during the months of December 2022 to November 2023.  
+
+## Analysis Summary
+
+Casual riders tend to ride longer in time and less often than members. This conclusion will be reinforced by the visuals in the following Share section.  
+
+One more observation which will be presented in the Share section is that casual riders are more spread out into the suburban neighborhoods of downtown Chicago.  
+
+
+# Share
+
+## Was the question of how annual members and casual riders use Cyclistic bikes differently answered?
+
+Yes, there are differences with how annual members and casual riders use Cyclistic bikes, referring to the above Analysis Summary.
+
+## What story does the data tell?
+
+Annual members tend to have more bike rides than casual riders for every day of the week, especially on weekdays.  
+
+The `average_duration` and `median_duration` is higher for casual riders than annual members. The `average_duration` and `median_duration` of annual members is more consistent for each day of the week, see the later graphs in this document.  
+
+The bike rides of casual riders are more spread out in the Chicago area than the ones for annual members.  
+
+## How do the findings relate to the original question?
+
+The findings show the differences between annual members and casual riders in regards to the number of bike rides, average ride lengths, and so on.  
+
+## Who is the audience? What is the best way to communicate with them?
+
+The audience will consist of the director of marketing and the Cyclistic executive team. Visualizations along with good data storytelling will help in communicating the meaning of this dataset to the audience.  
+
+## Can data visualization help share the findings?
+
+Yes, especially for this case study where the following graphs will help communicate the conclusions.  
+
+## Is the presentation accessible to the audience?
+
+This data analysis report and the R code associated with it is available in \cite{rmd}.  
+
+## Supporting visualizations and key findings.
+
+Annual members tend to have more bike rides than casual riders for every day of the week, especially on the weekdays, as shown in Figure \@ref(fig:bar-chart-1).  
+```{r bar-chart-1, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-3", fig.cap="\\label{(fig:bar-chart-1)}Column chart of number_of_rides by weekday for casual riders and members"}
+# Let's visualize the number of rides by rider type
+all_trips_v3 %>% 
+  mutate(weekday = wday(started_at, label = TRUE)) %>% 
+  group_by(member_casual, weekday) %>% 
+  summarise(number_of_rides = n()) %>% 
+  arrange(member_casual, weekday)  %>% 
+  ggplot(aes(x = weekday, y = number_of_rides, fill = member_casual)) +
+  geom_col(position = "dodge")
+```
+
+Casual riders tend to have longer average bike rides than for annual members, especially on the weekends. Annual members tend to have more consistent average bike ride lengths than for casual riders, as shown in Figure \@ref(fig:bar-chart-2).  
+```{r bar-chart-2, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-3", fig.cap="\\label{(fig:bar-chart-2)}Column chart of average_duration by weekday for casual riders and members"}
+# Let's create a visualization for average duration
+all_trips_v3 %>% 
+  mutate(weekday = wday(started_at, label = TRUE)) %>% 
+  group_by(member_casual, weekday) %>% 
+  summarise(average_duration = mean(ride_length)) %>% 
+  arrange(member_casual, weekday)  %>% 
+  ggplot(aes(x = weekday, y = average_duration, fill = member_casual)) +
+  geom_col(position = "dodge")
+```
+
+The median bike duration of casual riders tend to be longer than for annual members, especially on the weekends. Annual members tend to have more consistent median bike ride lengths than for casual riders, as shown in Figure \@ref(fig:bar-chart-3).  
+```{r bar-chart-3, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-3", fig.cap="Column chart of median_duration by weekday for casual riders and members"}
+# Let's create a visualization for median duration
+all_trips_v3 %>% 
+  mutate(weekday = wday(started_at, label = TRUE)) %>% 
+  group_by(member_casual, weekday) %>% 
+  summarise(median_duration = median(ride_length)) %>% 
+  arrange(member_casual, weekday)  %>% 
+  ggplot(aes(x = weekday, y = median_duration, fill = member_casual)) +
+  geom_col(position = "dodge")
+```
+
+The cleaned dataset is split into two groups, one for casual riders and the other for annual members.  
+```{r all-trips-casual-or-member, cache=TRUE, message=FALSE, dependson="all-trips-v3-final-3"}
+all_trips_v3_casual <- all_trips_v3 %>%
+  filter(member_casual == "casual")
+
+all_trips_v3_member <- all_trips_v3 %>%
+  filter(member_casual == "member")
+```
+
+Create subsets of bike rides for casual riders and for annual members, then shuffle both subsets together randomly.  
+```{r subset-of-final-3, cache=TRUE, message=FALSE, dependson="all-trips-casual-or-member"}
+# Set the seed for reproducibility
+set.seed(123)
+
+percentage <- 0.01
+member_adjustment <- 1.771
+all_trips_casual_subset <- all_trips_v3_casual %>% 
+  slice_sample(prop = percentage, replace = FALSE)
+all_trips_member_subset <- all_trips_v3_member %>%
+  slice_sample(prop = (percentage / member_adjustment), replace = FALSE)
+all_trips_subset <- bind_rows(all_trips_casual_subset, all_trips_member_subset)
+all_trips_shuffle_subset <- all_trips_subset[sample(nrow(all_trips_subset)), ]
+```
+
+The following maps uses two colors: blue is for casual riders and red is for annual members.  
+
+The starting points for casual riders are more spread out than for annual members as shown in Figure \@ref(fig:start-map-circle-markers).  
+```{r start-map-circle-markers, cache=TRUE, message=FALSE, dependson="subset-of-final-3", fig.cap="Map of the starting points of bike rides: blue dots are for casual riders and red dots are for members"}
+# Create a leaflet map
+my_start_map <- all_trips_shuffle_subset %>%
+  leaflet() %>%
+  addTiles()  # You can customize the map tiles using addProviderTiles() if needed
+
+# Add circle markers with colors based on the categorical column
+my_start_map <- my_start_map %>% 
+  addCircleMarkers(
+    lng = ~start_lng,
+    lat = ~start_lat,
+    color = ~ifelse(member_casual == "casual", "blue", "red"),
+    opacity = 0.7,
+    fillOpacity = 0.7,
+    radius = 4,
+    weight = 1
+  )
+
+# Save the leaflet map as an HTML file
+start_tmp_html <- tempfile(fileext = ".html")
+saveWidget(my_start_map, start_tmp_html, selfcontained = FALSE)
+
+# Use webshot to capture the leaflet map as an image
+start_tmp_image <- tempfile(fileext = ".png")
+webshot::webshot(start_tmp_html, file = start_tmp_image)
+```
+
+The ending points for casual riders are also more spread out than for annual members, as shown in Figure \@ref(fig:end-map-circle-markers). There is at least one bike ride for each group that ends further away than the rest of their respective groups.  
+```{r end-map-circle-markers, cache=TRUE, message=FALSE, dependson="subset-of-final-3", fig.cap="Map of the ending points of bike rides: blue dots are for casual riders and red dots are for members"}
+# Create a leaflet map
+my_end_map <- all_trips_shuffle_subset %>%
+  leaflet() %>%
+  addTiles()  # You can customize the map tiles using addProviderTiles() if needed
+
+# Add circle markers with colors based on the categorical column
+my_end_map <- my_end_map %>% 
+  addCircleMarkers(
+    lng = ~end_lng,
+    lat = ~end_lat,
+    color = ~ifelse(member_casual == "casual", "blue", "red"),
+    opacity = 0.7,
+    fillOpacity = 0.7,
+    radius = 4,
+    weight = 1
+  )
+
+# Save the leaflet map as an HTML file
+end_tmp_html <- tempfile(fileext = ".html")
+saveWidget(my_end_map, end_tmp_html, selfcontained = FALSE)
+
+# Use webshot to capture the leaflet map as an image
+end_tmp_image <- tempfile(fileext = ".png")
+webshot::webshot(end_tmp_html, file = end_tmp_image)
+```
+
+
+# Act
+
+## What is the final conclusion based on the analysis?
+
+Annual members tend to have more bike rides than casual riders, but with shorter and more consistent ride durations throughout the week. Member bike rides are more focused on areas in downtown Chicago.  
+
+Casual riders tend to have longer bike rides than annual members, but the ride duration is not consistent for every day of the week. Casual riders ride bikes less frequently than annual members. Casual riders have their bike rides more spread out across the suburban areas around Chicago than annual members.  
+
+## How could the team and business apply the insights?
+
+From these insights, the team will find out why casual riders would buy memberships, find out how digital media can convert casual riders to annual members, then design a marketing strategy according to the new insights.  
+
+## What next steps would the data analyst or the stakeholders take based on the findings?
+
+Determine what led to the current members to buy their memberships. Then figure out possible reasons for casual riders to buy memberships.  
+
+## Is there additional data that could be used to expand on the findings?
+
+User ids could give a better idea on which bike rides were used by the same biker and the purpose of the frequent rides.  
+
+## The top three recommendations based on the analysis.
+
+Determine the main reasons for current members purchasing their memberships.  
+
+Determine how casual riders can benefit from becoming members.  
+
+Find out which locations are more frequently visited by Cyclistic bikers that can be applied to the marketing strategy.  
+
+
+\bibliographystyle{plain}
+\bibliography{references}
+
